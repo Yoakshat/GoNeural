@@ -1,22 +1,18 @@
 package nn
 
 import (
-	"fmt"
 	"nntime/matrix"
 )
 
 type Operation interface {
-	Perform(mx [][]float64) [][]float64
-	UpdateWeight(grad [][]float64, lr float64)
+	Forward(mx [][]float64) [][]float64
+	Backward(mx [][]float64) [][]float64
+	SetGrad(grad [][]float64)
+}
 
-	// first we compute grad to be
-	// gradient of the next layer's neurons over this neuron
-
-	// then we work backwards to mean aloss/ainput
+type LossLayer interface {
+	Forward(prediction [][]float64, target [][]float64) float64
 	GetGrad() [][]float64
-	SetGrad([][]float64)
-
-	isActivation() bool
 }
 
 // gradient: alpha function after / alpha this
@@ -25,170 +21,139 @@ type Linear struct {
 	Cols int
 	Rows int
 
-	Mtx  [][]float64
-	Grad [][]float64
+	Mtx        [][]float64
+	Grad       [][]float64
+	WeightGrad [][]float64
 }
 
-// for relu, gradient = 1 or 0
 type Relu struct {
 	Grad [][]float64
 }
 
-type Loss struct {
+type MSELoss struct {
 	Grad [][]float64
 }
 
 // a network is just a list of operations
+// also should have a list of linear layers
 type Network struct {
 	// list of operations
-	Ops []Operation
+	Ops     []Operation
+	Linears []*Linear
+	Loss    LossLayer
+}
+
+func NeuralNetwork(Ops []Operation, Loss LossLayer) *Network {
+	linears := []*Linear{}
+
+	for _, op := range Ops {
+		l, ok := op.(*Linear)
+		if ok {
+			linears = append(linears, l)
+		}
+	}
+
+	return &Network{Ops: Ops, Linears: linears, Loss: Loss}
 }
 
 // performing our loss layer
-func (l *Loss) Perform(mx [][]float64) [][]float64 {
+func (l *MSELoss) Forward(yhat [][]float64, y [][]float64) float64 {
 	// return 1 number as matrix
-	var lossMtx [][]float64 = [][]float64{{0}}
-	var grad [][]float64
+	loss := 0.0
 
-	vec := mx[0]
+	for i := 0; i < len(yhat); i++ {
+		pred := yhat[i][0]
+		targ := y[i][0]
 
-	for i := 0; i < len(vec); i++ {
-		// for now -> our loss
-		lossMtx[0][0] += vec[i] * vec[i]
-
-		// append to l.Grad 2 * vec[i]
-		grad = append(grad, []float64{2 * vec[i]})
+		loss += (pred - targ) * (pred - targ)
+		l.Grad = append(l.Grad, []float64{2 * (pred + targ)})
 	}
 
-	l.Grad = grad
-	return lossMtx
+	// loss over number of samples (only 1 sample for now)
+	return loss
 }
 
-func (l Loss) UpdateWeight(grad [][]float64, lr float64) {
-	// no need to update anything
-}
-
-func (l Loss) GetGrad() [][]float64 {
+func (l *MSELoss) GetGrad() [][]float64 {
 	return l.Grad
 }
 
-func (l *Loss) SetGrad(grad [][]float64) {
-	l.Grad = grad
-}
-
-func (l Loss) isActivation() bool {
-	return false
-}
-
-func (r *Relu) Perform(mx [][]float64) [][]float64 {
+func (r *Relu) Forward(mx [][]float64) [][]float64 {
 	res, grad := matrix.OpRELU(mx)
 	r.Grad = grad
 	return res
 }
 
-func (r Relu) UpdateWeight(grad [][]float64, lr float64) {
-	// no need to update anything
+func (r *Relu) Backward(mx [][]float64) [][]float64 {
+	// series of 0s and 1s
+	// elementwise multiply of mx and 1's and 0's
+	res := matrix.MultE(mx, r.Grad)
+	return res
 }
 
 func (r *Relu) SetGrad(grad [][]float64) {
 	r.Grad = grad
 }
 
-func (r Relu) GetGrad() [][]float64 {
-	return r.Grad
-}
-
-func (r Relu) isActivation() bool {
-	return true
-}
-
-func (l *Linear) Perform(mx [][]float64) [][]float64 {
-
-	// gradient is weights
-	l.Grad = l.Mtx
-	var res, _ = matrix.MatrixMult(l.Mtx, mx)
-
+func (l *Linear) Forward(mx [][]float64) [][]float64 {
+	// get that dimension doesn't match
+	res, _ := matrix.MatrixMult(l.Mtx, mx)
+	// alpha next input / last input are just weights
+	l.Grad = matrix.Transpose(l.Mtx)
+	// repeat column for the number of rows res has
+	l.WeightGrad = matrix.RepeatCol(mx, len(res))
 	return res
 }
 
-func (l *Linear) UpdateWeight(grad [][]float64, lr float64) {
-	// yes, update!
-
-	lrMtx := matrix.FillMatrix(l.Rows, l.Cols, lr)
-
-	l.Mtx = matrix.AddE(l.Mtx, matrix.MultE(lrMtx, grad))
-}
-
-func (l Linear) GetGrad() [][]float64 {
-	return l.Grad
+func (l *Linear) Backward(mx [][]float64) [][]float64 {
+	res, _ := matrix.MatrixMult(l.Grad, mx)
+	return res
 }
 
 func (l *Linear) SetGrad(grad [][]float64) {
 	l.Grad = grad
 }
 
-func (l Linear) isActivation() bool {
-	return false
-}
-
-func (n Network) Perform(mx [][]float64) [][]float64 {
-
+// perform with labels
+func (n Network) Forward(mx [][]float64, target [][]float64) float64 {
 	for _, op := range n.Ops {
-		mx = op.Perform(mx)
+		mx = op.Forward(mx)
 	}
 
-	return mx
+	// perform loss layer
+	return n.Loss.Forward(mx, target)
 }
 
-// update weights
-// assumes always linear before activation
-func (n Network) Update(lr float64) {
-	// first step is to go backwards
-	// and collect aloss/ainput gradients
-	o := len(n.Ops)
-	gradUpdate := n.Ops[o-1].GetGrad()
-	o -= 1
-	condition := true
-
-	for condition {
-		fmt.Println(o)
-
-		if o < 1 {
-			break
-		}
-
-		// first check if isActivation
-		newOp := n.Ops[o-1]
-		var newGrad [][]float64
-
-		newGrad = newOp.GetGrad()
-
-		// but if activation
-		if newOp.isActivation() {
-			temp := newOp.GetGrad()
-
-			o -= 1
-			newOp = n.Ops[o-1]
-
-			// elementwise multiplication
-			// with 0's and 1's in ReLU
-			newGrad = matrix.MultE(temp, newOp.GetGrad())
-		}
-
-		// then carry on how you were before
-
-		// [[6]]
-		fmt.Println(gradUpdate)
-		// [[0 0 1]]
-
-		// WE FORGOT ABOUT THE 2 inputs (ouch)
-		fmt.Println(newGrad)
-		gradUpdate, _ = matrix.MatrixMult(gradUpdate, newGrad)
-		newOp.SetGrad(gradUpdate)
-
-		o -= 1
+// idea is to turn local gradients into global gradients
+func (n Network) Backward() {
+	res := n.Loss.GetGrad()
+	// go backwards through the network
+	for i := len(n.Ops) - 1; i >= 0; i-- {
+		// turning into global gradient
+		// every operation has a gradient, so we need a SetGrad
+		res = n.Ops[i].Backward(res)
+		n.Ops[i].SetGrad(res)
 	}
 
-	// second step is to go and actually update the weights
+	// multiply the (alpha input / alpha weight gradients) * (alpha Loss/alpha input)
+	// intuition is (gradients of layer that created those inputs) * (future loss/input gradients)
+	for i := len(n.Linears) - 1; i >= 0; i-- {
+		lossInputGrad := n.Loss.GetGrad()
+		if i < len(n.Linears)-1 {
+			lossInputGrad = n.Linears[i+1].Grad
+		}
 
+		localWeightGrad := n.Linears[i].WeightGrad
+		// turning into global gradient
+		// repeat for the number of rows the local weight gradient has
+		n.Linears[i].WeightGrad = matrix.MultE(localWeightGrad, matrix.RepeatRow(lossInputGrad, len(localWeightGrad)))
+	}
+}
+
+func (n Network) Update(lr float64) {
+	// only linear layers have weights
+	for _, lin := range n.Linears {
+		// update weights based on global weight gradients with respect to loss
+		// weights += lr * alpha loss / alpha weight
+		lin.Mtx = matrix.AddE(lin.Mtx, matrix.ScalarMultiply(lin.WeightGrad, lr))
+	}
 }
