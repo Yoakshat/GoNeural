@@ -38,7 +38,7 @@ func TestVecMult(t *testing.T) {
 		{3, 4},
 	}
 	vec1 := []float64{2, 1}
-	expected1 := []float64{5, 11} // [1*2+3*1, 2*2+4*1]
+	expected1 := []float64{4, 10} // [2*1 + 1*2, 2*3 + 1*4]
 	result1 := VecMult(mtx1, vec1)
 
 	if !floatSliceEqual(result1, expected1, 1e-9) {
@@ -48,12 +48,11 @@ func TestVecMult(t *testing.T) {
 	// Test case 2: 3x2 matrix * 3-element vector
 	// It is how it looks (3 rows and 2 columns)
 	mtx2 := [][]float64{
-		{1, 0},
-		{0, 1},
-		{2, 3},
+		{1, 0, 1},
+		{0, 1, 0},
 	}
 	vec2 := []float64{4, 5, 6}
-	expected2 := []float64{16, 23} // [1*4+0*5+2*6, 0*4+1*5+3*6]
+	expected2 := []float64{10, 5} // [4 + 6, 5]
 	result2 := VecMult(mtx2, vec2)
 
 	if !floatSliceEqual(result2, expected2, 1e-9) {
